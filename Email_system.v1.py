@@ -1,6 +1,9 @@
 import requests
 from mailjet_rest import Client
 
+
+#This is only a version check for github
+
 # ==========================================
 # 1. API Configuration
 # ==========================================
