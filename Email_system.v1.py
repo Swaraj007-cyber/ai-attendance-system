@@ -1,17 +1,18 @@
-import requests
+from huggingface_hub import InferenceClient
 from mailjet_rest import Client
 
 # ==========================================
 # 1. API Configuration
 # ==========================================
 # Hugging Face Setup
-HF_API_TOKEN = "YOUR_HUGGING_FACE_TOKEN_HERE" 
-HF_API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
-HEADERS = {"Authorization": f"Bearer {HF_API_TOKEN}"}
+HF_API_TOKEN = "YOUR_HUGGINGFACE_TOKEN_HERE" 
+
+# Initialize the official Hugging Face client
+hf_client = InferenceClient(api_key=HF_API_TOKEN)
 
 # Mailjet Setup
 MAILJET_API_KEY = "YOUR_MAILJET_API_KEY_HERE"
-MAILJET_API_SECRET = "YOUR_MAILJET_SECRET_KEY_HERE"
+MAILJET_API_SECRET = "YOUR_MAILJET_API_SECRET_HERE"
 SENDER_EMAIL = "swarajsandeepchondhe@gmail.com" # Must be verified in Mailjet!
 SENDER_NAME = "College Attendance Office"
 
@@ -22,36 +23,54 @@ mailjet = Client(auth=(MAILJET_API_KEY, MAILJET_API_SECRET), version='v3.1')
 # 2. Updated Student Database (Using Emails)
 # ==========================================
 attendance_data = {
-    "Indrajeet Sunil Hagare": {"Email": "yashhagare7@gmail.com", "Status": "Absent", "Previous_Absences": 10},
-    "Diksha": {"Email": "shetediksha10@gmail.com", "Status": "Absent", "Previous_Absences": 2},
-    "Swaraj": {"Email": "swarajsandeepchondhe@gmail.com", "Status": "Absent", "Previous_Absences": 5}
+    "yash": {"Email": "yashhagare7@gmail.com", "Status": "Absent", "Previous_Absences": 10}
 }
 
 # ==========================================
-# 3. AI Email Generator
+# 3. AI Email Generator (Tiered Tone)
 # ==========================================
 def generate_ai_email_body(name, previous_absences):
-    """Uses Hugging Face to draft a professional email about the absence."""
-    prompt = (
-        f"[INST] You are an automated college attendance system. Write a short, professional email "
-        f"to a student named {name}. Inform them they were marked absent today. "
-        f"Mention they have {previous_absences} previous absences on record. "
-        f"Ask them to contact their professor if they need to catch up. Do not include a subject line. [/INST]"
-    )
+    """Uses the Hugging Face conversational API to draft a custom email."""
     
-    payload = {
-        "inputs": prompt,
-        "parameters": {"max_new_tokens": 80, "temperature": 0.7, "return_full_text": False}
-    }
+    # 1. Decide the Tone and Instructions
+    if previous_absences == 0:
+        instructions = (
+            f"You are a friendly college attendance assistant. Write an email to {name} "
+            f"who was absent today for the very first time. Be warm and supportive. "
+            f"Ask if they are feeling well and remind them to check the online portal for today's notes. "
+            f"Write exactly 3 sentences. Do not include a subject line."
+        )
+    elif previous_absences <= 2:
+        instructions = (
+            f"You are a college academic advisor. Write a polite but firm email to {name}. "
+            f"Inform them they were marked absent today. Explicitly state they have {previous_absences} previous absences. "
+            f"Remind them that consistent attendance is crucial for passing the coursework. "
+            f"Write exactly 3 sentences. Do not include a subject line."
+        )
+    else:
+        instructions = (
+            f"You are the Dean of Students. Write a serious, urgent, and professional email to {name}. "
+            f"Start the email EXACTLY with 'Dear {name},' and do not invent any last names or use titles like Mr./Ms. "
+            f"Inform them they were marked absent today. Highlight that they now have a critical total of {previous_absences} previous absences. "
+            f"Instruct them to reply to this email immediately to schedule a mandatory meeting to discuss their academic standing. "
+            f"Write exactly 4 sentences. Do not include a subject line."
+        )
     
+    # 2. Send to Hugging Face
     try:
-        response = requests.post(HF_API_URL, headers=HEADERS, json=payload)
-        if response.status_code == 200:
-            return response.json()[0]['generated_text'].strip()
-        else:
-            return f"Dear {name},\n\nYou were marked absent today. You currently have {previous_absences} prior absences. Please ensure you catch up on any missed work.\n\nBest,\nAttendance Office"
-    except Exception:
-        return f"Dear {name},\n\nYou were marked absent today. You have {previous_absences} prior absences."
+        # Updated to Qwen 2.5 7B Instruct
+        response = hf_client.chat.completions.create(
+            model="Qwen/Qwen2.5-7B-Instruct",
+            messages=[{"role": "user", "content": instructions}],
+            max_tokens=120,
+            temperature=0.7
+        )
+        
+        return response.choices[0].message.content.strip()
+        
+    except Exception as e:
+        print(f"\n⚠️ AI ERROR: {e}\n")
+        return f"Dear {name},\n\nYou were marked absent today. You currently have {previous_absences} prior absences. Please contact the office."
 
 # ==========================================
 # 4. Mailjet Sending Function
@@ -96,11 +115,9 @@ def process_absences():
         if info["Status"].lower() == "absent":
             print(f"Drafting AI email for {name}...")
             
-            # 1. Generate the text using Hugging Face
             email_content = generate_ai_email_body(name, info["Previous_Absences"])
-            
-            # 2. Send the text using Mailjet
             send_mailjet_email(info["Email"], name, email_content)
+            
             print("-" * 30)
 
 if __name__ == "__main__":
